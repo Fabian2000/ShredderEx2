@@ -69,6 +69,7 @@ static D3D12_CPU_DESCRIPTOR_HANDLE  g_mainRenderTargetDescriptor[NUM_BACK_BUFFER
 LPWSTR* argv;
 
 // Forward declarations of helper functions
+wstring ImGuiTruncateTextMiddle(const std::wstring& text, float maxWidth);
 void ImGuiPushDisableItem(bool toggle);
 void ImGuiPopDisableItem(bool toggle);
 void ImGuiMarqueeProgressBar(float speed, ImVec2 size);
@@ -83,233 +84,284 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 // Main code
 int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPWSTR lpCmdLine, _In_ int nCmdShow)
 {
-    int argc;
-    argv = CommandLineToArgvW(GetCommandLineW(), &argc);
-    // Create application window
-    //ImGui_ImplWin32_EnableDpiAwareness();
-    WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr };
-    ::RegisterClassExW(&wc);
-    HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"ShredderEx2", WS_OVERLAPPEDWINDOW, 100, 100, 1280, 800, nullptr, nullptr, wc.hInstance, nullptr);
+    try {
+        int argc;
+        argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        // Create application window
+        //ImGui_ImplWin32_EnableDpiAwareness();
+        WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr };
+        ::RegisterClassExW(&wc);
+        HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"ShredderEx2", WS_OVERLAPPEDWINDOW, 100, 100, 1280, 800, nullptr, nullptr, wc.hInstance, nullptr);
 
-    // Initialize Direct3D
-    if (!CreateDeviceD3D(hwnd))
-    {
-        CleanupDeviceD3D();
-        ::UnregisterClassW(wc.lpszClassName, wc.hInstance);
-        return 1;
-    }
-
-    // Window size and controls
-    ImVec2 windowFullSize = ImVec2(550, 260);
-    SetWindowPos(hwnd, NULL, 200, 200, windowFullSize.x, windowFullSize.y, 0);
-    LONG style = GetWindowLong(hwnd, GWL_STYLE);
-    style &= ~WS_MAXIMIZEBOX;
-    style &= ~WS_THICKFRAME;
-    SetWindowLongPtr(hwnd, GWL_STYLE, style);
-    SetWindowPos(hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
-    DWORD titlebarColor = RGB(45, 45, 45);
-    DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &titlebarColor, sizeof(titlebarColor));
-    HMENU hMenu = GetSystemMenu(hwnd, FALSE);
-    RemoveMenu(hMenu, SC_CLOSE, MF_BYCOMMAND);
-
-    LONG extendedStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
-    SetWindowLong(hwnd, GWL_EXSTYLE, extendedStyle | WS_EX_DLGMODALFRAME);
-    SetWindowPos(hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
-
-    // Show the window
-    ::ShowWindow(hwnd, SW_SHOWDEFAULT);
-    ::UpdateWindow(hwnd);
-
-    // Setup Dear ImGui context
-    IMGUI_CHECKVERSION();
-    ImGui::CreateContext();
-    ImGuiIO& io = ImGui::GetIO(); (void)io;
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
-
-    // Setup Dear ImGui style
-    ImGui::StyleColorsDark();
-    //ImGui::StyleColorsLight();
-
-    // Setup Platform/Renderer backends
-    ImGui_ImplWin32_Init(hwnd);
-    ImGui_ImplDX12_Init(g_pd3dDevice, NUM_FRAMES_IN_FLIGHT,
-        DXGI_FORMAT_R8G8B8A8_UNORM, g_pd3dSrvDescHeap,
-        g_pd3dSrvDescHeap->GetCPUDescriptorHandleForHeapStart(),
-        g_pd3dSrvDescHeap->GetGPUDescriptorHandleForHeapStart());
-
-    // Load Fonts
-    // - If no fonts are loaded, dear imgui will use the default font. You can also load multiple fonts and use ImGui::PushFont()/PopFont() to select them.
-    // - AddFontFromFileTTF() will return the ImFont* so you can store it if you need to select the font among multiple.
-    // - If the file cannot be loaded, the function will return a nullptr. Please handle those errors in your application (e.g. use an assertion, or display an error and quit).
-    // - The fonts will be rasterized at a given size (w/ oversampling) and stored into a texture when calling ImFontAtlas::Build()/GetTexDataAsXXXX(), which ImGui_ImplXXXX_NewFrame below will call.
-    // - Use '#define IMGUI_ENABLE_FREETYPE' in your imconfig file to use Freetype for higher quality font rendering.
-    // - Read 'docs/FONTS.md' for more instructions and details.
-    // - Remember that in C/C++ if you want to include a backslash \ in a string literal you need to write a double backslash \\ !
-    //io.Fonts->AddFontDefault();
-    //io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\segoeui.ttf", 18.0f);
-    //io.Fonts->AddFontFromFileTTF("../../misc/fonts/DroidSans.ttf", 16.0f);
-    //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Roboto-Medium.ttf", 16.0f);
-    //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Cousine-Regular.ttf", 15.0f);
-    ImFont* font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\Arial.ttf", 18.0f, nullptr, io.Fonts->GetGlyphRangesJapanese());
-    IM_ASSERT(font != nullptr);
-
-    ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
-
-    FileManagement fileManagement;
-    vector<vector<wstring>> filesAndFolders;
-    int totalCount = 0;
-    std::future<void> findFilesAndFolders = std::async(std::launch::async, [&] {
-        // Get all paths and subpaths
-        for (int i = 0; i < argc; i++) {
-            if (fileManagement.IsFile(argv[i])) {
-                vector<wstring> simpleFile = { argv[i] };
-                filesAndFolders.push_back(simpleFile);
-            }
-            else {
-                filesAndFolders.push_back(fileManagement.GetAllNeededPaths(argv[i]));
-            }
-        }
-
-        // Count inner vectors -> Useful for the progressbar -> totalCount = 100 %
-        for (const auto& innerVec : filesAndFolders) {
-            totalCount += innerVec.size();
-        }
-    });
-
-    // Main loop
-    bool done = false;
-    float marqueeFileSearchSpeed = 1.f;
-    bool rememberCheckbox = false;
-    wstring closeBtnText = L"Cancel";
-    while (!done) {
-        if (findFilesAndFolders.wait_for(chrono::seconds(0)) == future_status::ready) {
-            marqueeFileSearchSpeed = 0.f;
-        }
-
-        // Poll and handle messages (inputs, window resize, etc.)
-        // See the WndProc() function below for our to dispatch events to the Win32 backend.
-        MSG msg;
-        while (::PeekMessage(&msg, nullptr, 0U, 0U, PM_REMOVE))
+        // Initialize Direct3D
+        if (!CreateDeviceD3D(hwnd))
         {
-            ::TranslateMessage(&msg);
-            ::DispatchMessage(&msg);
-            if (msg.message == WM_QUIT)
-                done = true;
+            CleanupDeviceD3D();
+            ::UnregisterClassW(wc.lpszClassName, wc.hInstance);
+            return 1;
         }
-        if (done)
-            break;
 
-        // Start the Dear ImGui frame
-        ImGui_ImplDX12_NewFrame();
-        ImGui_ImplWin32_NewFrame();
-        ImGui::NewFrame();
+        // Window size and controls
+        ImVec2 windowFullSize = ImVec2(550, 260);
+        SetWindowPos(hwnd, NULL, 200, 200, windowFullSize.x, windowFullSize.y, 0);
+        LONG style = GetWindowLong(hwnd, GWL_STYLE);
+        style &= ~WS_MAXIMIZEBOX;
+        style &= ~WS_THICKFRAME;
+        SetWindowLongPtr(hwnd, GWL_STYLE, style);
+        SetWindowPos(hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+        DWORD titlebarColor = RGB(45, 45, 45);
+        DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &titlebarColor, sizeof(titlebarColor));
+        HMENU hMenu = GetSystemMenu(hwnd, FALSE);
+        RemoveMenu(hMenu, SC_CLOSE, MF_BYCOMMAND);
 
-        ImGuiStyle& style = ImGui::GetStyle();
-        style.WindowBorderSize = 0.0f;
-        style.WindowPadding = ImVec2(15, 15);
-        style.FrameRounding = 5.f;
+        LONG extendedStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+        SetWindowLong(hwnd, GWL_EXSTYLE, extendedStyle | WS_EX_DLGMODALFRAME);
+        SetWindowPos(hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
 
-        ImGui::SetNextWindowPos(ImVec2(0, 0));
-        ImVec2 windowSize = ImGui::GetIO().DisplaySize;
-        ImGui::SetNextWindowSize(windowSize);
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGuiColor(GetRValue(titlebarColor), GetGValue(titlebarColor), GetBValue(titlebarColor)));
+        // Show the window
+        ::ShowWindow(hwnd, SW_SHOWDEFAULT);
+        ::UpdateWindow(hwnd);
+
+        // Setup Dear ImGui context
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGuiIO& io = ImGui::GetIO(); (void)io;
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+
+        // Setup Dear ImGui style
+        ImGui::StyleColorsDark();
+        //ImGui::StyleColorsLight();
+
+        // Setup Platform/Renderer backends
+        ImGui_ImplWin32_Init(hwnd);
+        ImGui_ImplDX12_Init(g_pd3dDevice, NUM_FRAMES_IN_FLIGHT,
+            DXGI_FORMAT_R8G8B8A8_UNORM, g_pd3dSrvDescHeap,
+            g_pd3dSrvDescHeap->GetCPUDescriptorHandleForHeapStart(),
+            g_pd3dSrvDescHeap->GetGPUDescriptorHandleForHeapStart());
+
+        // Load Fonts
+        // - If no fonts are loaded, dear imgui will use the default font. You can also load multiple fonts and use ImGui::PushFont()/PopFont() to select them.
+        // - AddFontFromFileTTF() will return the ImFont* so you can store it if you need to select the font among multiple.
+        // - If the file cannot be loaded, the function will return a nullptr. Please handle those errors in your application (e.g. use an assertion, or display an error and quit).
+        // - The fonts will be rasterized at a given size (w/ oversampling) and stored into a texture when calling ImFontAtlas::Build()/GetTexDataAsXXXX(), which ImGui_ImplXXXX_NewFrame below will call.
+        // - Use '#define IMGUI_ENABLE_FREETYPE' in your imconfig file to use Freetype for higher quality font rendering.
+        // - Read 'docs/FONTS.md' for more instructions and details.
+        // - Remember that in C/C++ if you want to include a backslash \ in a string literal you need to write a double backslash \\ !
+        //io.Fonts->AddFontDefault();
+        //io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\segoeui.ttf", 18.0f);
+        //io.Fonts->AddFontFromFileTTF("../../misc/fonts/DroidSans.ttf", 16.0f);
+        //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Roboto-Medium.ttf", 16.0f);
+        //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Cousine-Regular.ttf", 15.0f);
+        ImFont* font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\Arial.ttf", 18.0f, nullptr, io.Fonts->GetGlyphRangesJapanese());
+        IM_ASSERT(font != nullptr);
+
+        ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+
+        atomic<bool> cancelFutureTasks(false);
+        FileManagement fileManagement;
+        vector<vector<wstring>> filesAndFolders;
+        int totalCount = 0;
+        std::future<void> findFilesAndFolders = std::async(std::launch::async, [&] {
+            // Get all paths and subpaths
+            for (int i = 1; i < argc; i++) {
+                if (fileManagement.IsFile(argv[i])) {
+                    vector<wstring> simpleFile = { argv[i] };
+                    filesAndFolders.push_back(simpleFile);
+                }
+                else {
+                    filesAndFolders.push_back(fileManagement.GetAllNeededPaths(argv[i], &cancelFutureTasks));
+                }
+            }
+
+            // Count inner vectors -> Useful for the progressbar -> totalCount = 100 %
+            for (const auto& innerVec : filesAndFolders) {
+                totalCount += innerVec.size();
+            }
+            });
+
+        // Main loop
+        bool done = false;
+        float marqueeFileSearchSpeed = 1.f;
+        bool rememberCheckbox = false;
+        wstring closeBtnText = L"Cancel";
+        while (!done) {
+            if (findFilesAndFolders.wait_for(chrono::seconds(0)) == future_status::ready) {
+                marqueeFileSearchSpeed = 0.f;
+            }
+
+            // Poll and handle messages (inputs, window resize, etc.)
+            // See the WndProc() function below for our to dispatch events to the Win32 backend.
+            MSG msg;
+            while (::PeekMessage(&msg, nullptr, 0U, 0U, PM_REMOVE))
+            {
+                ::TranslateMessage(&msg);
+                ::DispatchMessage(&msg);
+                if (msg.message == WM_QUIT)
+                    done = true;
+            }
+            if (done)
+                break;
+
+            // Start the Dear ImGui frame
+            ImGui_ImplDX12_NewFrame();
+            ImGui_ImplWin32_NewFrame();
+            ImGui::NewFrame();
+
+            ImGuiStyle& style = ImGui::GetStyle();
+            style.WindowBorderSize = 0.0f;
+            style.WindowPadding = ImVec2(15, 15);
+            style.FrameRounding = 5.f;
+
+            ImGui::SetNextWindowPos(ImVec2(0, 0));
+            ImVec2 windowSize = ImGui::GetIO().DisplaySize;
+            ImGui::SetNextWindowSize(windowSize);
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGuiColor(GetRValue(titlebarColor), GetGValue(titlebarColor), GetBValue(titlebarColor)));
             ImGui::Begin("###NormalWindow", (bool*)true, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDecoration);
-                ImVec4 actionColor = ImGuiColor(240, 150, 40);
-                ImVec4 normalColor = ImGuiColor(220, 110, 25);
-                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, actionColor);
-                ImGui::PushStyleColor(ImGuiCol_Button, normalColor);
-                ImGui::PushStyleColor(ImGuiCol_FrameBg, normalColor);
-                ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, actionColor);
-                ImGui::PushStyleColor(ImGuiCol_FrameBgActive, actionColor);
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, actionColor);
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, actionColor);
-                ImGui::PushStyleColor(ImGuiCol_CheckMark, ImGuiColor(255, 255, 255));
-                    ImGuiMarqueeProgressBar(marqueeFileSearchSpeed, ImVec2(windowSize.x - style.WindowPadding.x * 2, 33));
-                    ImGui::Text("C:/example/path/idk/random.file");
-                    ImGui::Dummy(ImVec2(0, style.WindowPadding.y));
-                    ImGui::ProgressBar(.5f, ImVec2(windowSize.x - style.WindowPadding.x * 3 - 75, 33));
-                    ImGui::SameLine(0, style.WindowPadding.x);
-                    ImGuiPushDisableItem(true);
-                        ImGui::Button("Start", ImVec2(75, 33));
-                    ImGuiPopDisableItem(true);
-                    ImGui::Text("C:/example/path/idk/random.file");
-                    ImGui::Dummy(ImVec2(0, style.WindowPadding.y));
-                    if (ImGui::Button(ImGuiWString(closeBtnText), ImVec2(75, 33)))
-                    {
-                        done = true;
-                    }
-                    ImGuiPushDisableItem(true);
-                    float btnSize = ImGui::GetItemRectSize().y;
-                    ImGui::SameLine(0, windowSize.x - (75 * 3 + style.WindowPadding.x * 5 + (/*Checkbox*/style.FramePadding.y * 2 + style.ItemInnerSpacing.x + ImGui::CalcTextSize("Remember Choice").x + 3)));
-                    float currentPosY = ImGui::GetCursorPosY();
-                    ImGui::SetCursorPosY(currentPosY + btnSize / 2 - ImGui::GetFrameHeight() / 2);
-                    ImGui::Checkbox("Remember Choice", &rememberCheckbox);
-                    ImGui::SetCursorPosY(currentPosY);
-                    ImGui::SameLine(0, style.WindowPadding.x);
-                    ImGui::Button("Skip", ImVec2(75, 33));
-                    ImGui::SameLine(0, style.WindowPadding.x);
-                    ImGui::Button("Kill", ImVec2(75, 33));
-                    ImGuiPopDisableItem(true);
-                ImGui::PopStyleColor(8);
+            ImVec4 actionColor = ImGuiColor(240, 150, 40);
+            ImVec4 normalColor = ImGuiColor(220, 110, 25);
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, actionColor);
+            ImGui::PushStyleColor(ImGuiCol_Button, normalColor);
+            ImGui::PushStyleColor(ImGuiCol_FrameBg, normalColor);
+            ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, actionColor);
+            ImGui::PushStyleColor(ImGuiCol_FrameBgActive, actionColor);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, actionColor);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, actionColor);
+            ImGui::PushStyleColor(ImGuiCol_CheckMark, ImGuiColor(255, 255, 255));
+            ImGuiMarqueeProgressBar(marqueeFileSearchSpeed, ImVec2(windowSize.x - style.WindowPadding.x * 2, 33));
+            ImGui::SetNextItemWidth(windowSize.x - style.WindowPadding.x * 2);
+            ImGui::Text(ImGuiWString(ImGuiTruncateTextMiddle(fileManagement.LatestScanFile, windowSize.x - style.WindowPadding.x * 2)));
+            ImGui::Dummy(ImVec2(0, style.WindowPadding.y));
+            ImGui::ProgressBar(.5f, ImVec2(windowSize.x - style.WindowPadding.x * 3 - 75, 33));
+            ImGui::SameLine(0, style.WindowPadding.x);
+            ImGuiPushDisableItem(true);
+            ImGui::Button("Start", ImVec2(75, 33));
+            ImGuiPopDisableItem(true);
+            ImGui::Text("C:/example/path/idk/random.file");
+            ImGui::Dummy(ImVec2(0, style.WindowPadding.y));
+            if (ImGui::Button(ImGuiWString(closeBtnText), ImVec2(75, 33)))
+            {
+                done = true;
+                cancelFutureTasks = true;
+            }
+            ImGuiPushDisableItem(true);
+            float btnSize = ImGui::GetItemRectSize().y;
+            ImGui::SameLine(0, windowSize.x - (75 * 3 + style.WindowPadding.x * 5 + (/*Checkbox*/style.FramePadding.y * 2 + style.ItemInnerSpacing.x + ImGui::CalcTextSize("Remember Choice").x + 3)));
+            float currentPosY = ImGui::GetCursorPosY();
+            ImGui::SetCursorPosY(currentPosY + btnSize / 2 - ImGui::GetFrameHeight() / 2);
+            ImGui::Checkbox("Remember Choice", &rememberCheckbox);
+            ImGui::SetCursorPosY(currentPosY);
+            ImGui::SameLine(0, style.WindowPadding.x);
+            ImGui::Button("Skip", ImVec2(75, 33));
+            ImGui::SameLine(0, style.WindowPadding.x);
+            ImGui::Button("Kill", ImVec2(75, 33));
+            ImGuiPopDisableItem(true);
+            ImGui::PopStyleColor(8);
             ImGui::End();
-        ImGui::PopStyleColor();
+            ImGui::PopStyleColor();
 
-        // Rendering
-        ImGui::Render();
+            // Rendering
+            ImGui::Render();
 
-        FrameContext* frameCtx = WaitForNextFrameResources();
-        UINT backBufferIdx = g_pSwapChain->GetCurrentBackBufferIndex();
-        frameCtx->CommandAllocator->Reset();
+            FrameContext* frameCtx = WaitForNextFrameResources();
+            UINT backBufferIdx = g_pSwapChain->GetCurrentBackBufferIndex();
+            frameCtx->CommandAllocator->Reset();
 
-        D3D12_RESOURCE_BARRIER barrier = {};
-        barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-        barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-        barrier.Transition.pResource = g_mainRenderTargetResource[backBufferIdx];
-        barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
-        barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-        g_pd3dCommandList->Reset(frameCtx->CommandAllocator, nullptr);
-        g_pd3dCommandList->ResourceBarrier(1, &barrier);
+            D3D12_RESOURCE_BARRIER barrier = {};
+            barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+            barrier.Transition.pResource = g_mainRenderTargetResource[backBufferIdx];
+            barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_PRESENT;
+            barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
+            g_pd3dCommandList->Reset(frameCtx->CommandAllocator, nullptr);
+            g_pd3dCommandList->ResourceBarrier(1, &barrier);
 
-        // Render Dear ImGui graphics
-        const float clear_color_with_alpha[4] = { clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w };
-        g_pd3dCommandList->ClearRenderTargetView(g_mainRenderTargetDescriptor[backBufferIdx], clear_color_with_alpha, 0, nullptr);
-        g_pd3dCommandList->OMSetRenderTargets(1, &g_mainRenderTargetDescriptor[backBufferIdx], FALSE, nullptr);
-        g_pd3dCommandList->SetDescriptorHeaps(1, &g_pd3dSrvDescHeap);
-        ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), g_pd3dCommandList);
-        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-        barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
-        g_pd3dCommandList->ResourceBarrier(1, &barrier);
-        g_pd3dCommandList->Close();
+            // Render Dear ImGui graphics
+            const float clear_color_with_alpha[4] = { clear_color.x * clear_color.w, clear_color.y * clear_color.w, clear_color.z * clear_color.w, clear_color.w };
+            g_pd3dCommandList->ClearRenderTargetView(g_mainRenderTargetDescriptor[backBufferIdx], clear_color_with_alpha, 0, nullptr);
+            g_pd3dCommandList->OMSetRenderTargets(1, &g_mainRenderTargetDescriptor[backBufferIdx], FALSE, nullptr);
+            g_pd3dCommandList->SetDescriptorHeaps(1, &g_pd3dSrvDescHeap);
+            ImGui_ImplDX12_RenderDrawData(ImGui::GetDrawData(), g_pd3dCommandList);
+            barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+            barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
+            g_pd3dCommandList->ResourceBarrier(1, &barrier);
+            g_pd3dCommandList->Close();
 
-        g_pd3dCommandQueue->ExecuteCommandLists(1, (ID3D12CommandList* const*)&g_pd3dCommandList);
+            g_pd3dCommandQueue->ExecuteCommandLists(1, (ID3D12CommandList* const*)&g_pd3dCommandList);
 
-        g_pSwapChain->Present(1, 0); // Present with vsync
-        //g_pSwapChain->Present(0, 0); // Present without vsync
+            g_pSwapChain->Present(1, 0); // Present with vsync
+            //g_pSwapChain->Present(0, 0); // Present without vsync
 
-        UINT64 fenceValue = g_fenceLastSignaledValue + 1;
-        g_pd3dCommandQueue->Signal(g_fence, fenceValue);
-        g_fenceLastSignaledValue = fenceValue;
-        frameCtx->FenceValue = fenceValue;
+            UINT64 fenceValue = g_fenceLastSignaledValue + 1;
+            g_pd3dCommandQueue->Signal(g_fence, fenceValue);
+            g_fenceLastSignaledValue = fenceValue;
+            frameCtx->FenceValue = fenceValue;
+        }
+
+        WaitForLastSubmittedFrame();
+        findFilesAndFolders.get();
+
+        // Cleanup
+        LocalFree(hwnd);
+        ImGui_ImplDX12_Shutdown();
+        ImGui_ImplWin32_Shutdown();
+        ImGui::DestroyContext();
+
+        CleanupDeviceD3D();
+        ::DestroyWindow(hwnd);
+        ::UnregisterClassW(wc.lpszClassName, wc.hInstance);
     }
-
-    WaitForLastSubmittedFrame();
-
-    // Cleanup
-    LocalFree(hwnd);
-    ImGui_ImplDX12_Shutdown();
-    ImGui_ImplWin32_Shutdown();
-    ImGui::DestroyContext();
-
-    CleanupDeviceD3D();
-    ::DestroyWindow(hwnd);
-    ::UnregisterClassW(wc.lpszClassName, wc.hInstance);
+    catch (const exception) {}
 
     return 0;
 }
 
 // Helper functions
+
+wstring ImGuiTruncateTextMiddle(const wstring& text, float maxWidth) {
+    float padding = 10.0f;
+    maxWidth -= padding;
+
+    ImVec2 fullTextSize = ImGui::CalcTextSize(ImGuiWString(text));
+    if (fullTextSize.x <= maxWidth) {
+        return text;
+    }
+
+    wstring ellipsis = L"...";
+    ImVec2 ellipsisSize = ImGui::CalcTextSize(ImGuiWString(ellipsis));
+    float availableWidth = maxWidth - ellipsisSize.x;
+
+    int leftCharCount = 0, rightCharCount = 0;
+    float widthLeft = 0.0f, widthRight = 0.0f;
+
+    while (leftCharCount + rightCharCount < text.length()) {
+        if (widthLeft <= widthRight) {
+            if (leftCharCount < text.length()) {
+                widthLeft = ImGui::CalcTextSize(ImGuiWString(text.substr(0, leftCharCount + 1))).x;
+                if (widthLeft + widthRight <= availableWidth) {
+                    leftCharCount++;
+                }
+                else {
+                    break;
+                }
+            }
+        }
+        else {
+            if (rightCharCount < text.length()) {
+                widthRight = ImGui::CalcTextSize(ImGuiWString(text.substr(text.length() - rightCharCount - 1))).x;
+                if (widthLeft + widthRight <= availableWidth) {
+                    rightCharCount++;
+                }
+                else {
+                    break;
+                }
+            }
+        }
+    }
+
+    return text.substr(0, leftCharCount) + ellipsis + text.substr(text.length() - rightCharCount);
+}
 
 void ImGuiPushDisableItem(bool toggle)
 {
