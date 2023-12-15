@@ -25,6 +25,21 @@
 #include <dxgidebug.h>
 #pragma comment(lib, "dxguid.lib")
 #endif
+#include <dwmapi.h>
+#include "imgui/imgui_internal.h"
+#include <future>
+#include "FileManagement.h"
+
+#define ImGuiColor(r, g, b, a)  ImVec4(r / 255.f, g / 255.f, b / 255.f, a / 255.f)
+#define ImGuiColor(r, g, b)  ImVec4(r / 255.f, g / 255.f, b / 255.f, 1.f)
+
+#define ImGuiWString(wstr) ([](const std::wstring& _wstr) -> std::string { \
+    if (_wstr.empty()) return std::string(); \
+    int bufferSize = WideCharToMultiByte(CP_UTF8, 0, _wstr.c_str(), -1, nullptr, 0, nullptr, nullptr); \
+    std::string str(bufferSize, 0); \
+    WideCharToMultiByte(CP_UTF8, 0, _wstr.c_str(), -1, &str[0], bufferSize, nullptr, nullptr); \
+    return str; \
+})(wstr).c_str()
 
 struct FrameContext
 {
@@ -51,7 +66,12 @@ static HANDLE                       g_hSwapChainWaitableObject = nullptr;
 static ID3D12Resource* g_mainRenderTargetResource[NUM_BACK_BUFFERS] = {};
 static D3D12_CPU_DESCRIPTOR_HANDLE  g_mainRenderTargetDescriptor[NUM_BACK_BUFFERS] = {};
 
+LPWSTR* argv;
+
 // Forward declarations of helper functions
+void ImGuiPushDisableItem(bool toggle);
+void ImGuiPopDisableItem(bool toggle);
+void ImGuiMarqueeProgressBar(float speed, ImVec2 size);
 bool CreateDeviceD3D(HWND hWnd);
 void CleanupDeviceD3D();
 void CreateRenderTarget();
@@ -63,11 +83,13 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 // Main code
 int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _In_ LPWSTR lpCmdLine, _In_ int nCmdShow)
 {
+    int argc;
+    argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     // Create application window
     //ImGui_ImplWin32_EnableDpiAwareness();
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr };
     ::RegisterClassExW(&wc);
-    HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"Dear ImGui DirectX12 Example", WS_OVERLAPPEDWINDOW, 100, 100, 1280, 800, nullptr, nullptr, wc.hInstance, nullptr);
+    HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"ShredderEx2", WS_OVERLAPPEDWINDOW, 100, 100, 1280, 800, nullptr, nullptr, wc.hInstance, nullptr);
 
     // Initialize Direct3D
     if (!CreateDeviceD3D(hwnd))
@@ -76,6 +98,23 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
         ::UnregisterClassW(wc.lpszClassName, wc.hInstance);
         return 1;
     }
+
+    // Window size and controls
+    ImVec2 windowFullSize = ImVec2(550, 260);
+    SetWindowPos(hwnd, NULL, 200, 200, windowFullSize.x, windowFullSize.y, 0);
+    LONG style = GetWindowLong(hwnd, GWL_STYLE);
+    style &= ~WS_MAXIMIZEBOX;
+    style &= ~WS_THICKFRAME;
+    SetWindowLongPtr(hwnd, GWL_STYLE, style);
+    SetWindowPos(hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+    DWORD titlebarColor = RGB(45, 45, 45);
+    DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, &titlebarColor, sizeof(titlebarColor));
+    HMENU hMenu = GetSystemMenu(hwnd, FALSE);
+    RemoveMenu(hMenu, SC_CLOSE, MF_BYCOMMAND);
+
+    LONG extendedStyle = GetWindowLong(hwnd, GWL_EXSTYLE);
+    SetWindowLong(hwnd, GWL_EXSTYLE, extendedStyle | WS_EX_DLGMODALFRAME);
+    SetWindowPos(hwnd, NULL, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
 
     // Show the window
     ::ShowWindow(hwnd, SW_SHOWDEFAULT);
@@ -112,18 +151,42 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
     //io.Fonts->AddFontFromFileTTF("../../misc/fonts/DroidSans.ttf", 16.0f);
     //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Roboto-Medium.ttf", 16.0f);
     //io.Fonts->AddFontFromFileTTF("../../misc/fonts/Cousine-Regular.ttf", 15.0f);
-    //ImFont* font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\ArialUni.ttf", 18.0f, nullptr, io.Fonts->GetGlyphRangesJapanese());
-    //IM_ASSERT(font != nullptr);
+    ImFont* font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\Arial.ttf", 18.0f, nullptr, io.Fonts->GetGlyphRangesJapanese());
+    IM_ASSERT(font != nullptr);
 
-    // Our state
-    bool show_demo_window = true;
-    bool show_another_window = false;
     ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+
+    FileManagement fileManagement;
+    vector<vector<wstring>> filesAndFolders;
+    int totalCount = 0;
+    std::future<void> findFilesAndFolders = std::async(std::launch::async, [&] {
+        // Get all paths and subpaths
+        for (int i = 0; i < argc; i++) {
+            if (fileManagement.IsFile(argv[i])) {
+                vector<wstring> simpleFile = { argv[i] };
+                filesAndFolders.push_back(simpleFile);
+            }
+            else {
+                filesAndFolders.push_back(fileManagement.GetAllNeededPaths(argv[i]));
+            }
+        }
+
+        // Count inner vectors -> Useful for the progressbar -> totalCount = 100 %
+        for (const auto& innerVec : filesAndFolders) {
+            totalCount += innerVec.size();
+        }
+    });
 
     // Main loop
     bool done = false;
-    while (!done)
-    {
+    float marqueeFileSearchSpeed = 1.f;
+    bool rememberCheckbox = false;
+    wstring closeBtnText = L"Cancel";
+    while (!done) {
+        if (findFilesAndFolders.wait_for(chrono::seconds(0)) == future_status::ready) {
+            marqueeFileSearchSpeed = 0.f;
+        }
+
         // Poll and handle messages (inputs, window resize, etc.)
         // See the WndProc() function below for our to dispatch events to the Win32 backend.
         MSG msg;
@@ -142,42 +205,55 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
-        // 1. Show the big demo window (Most of the sample code is in ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear ImGui!).
-        if (show_demo_window)
-            ImGui::ShowDemoWindow(&show_demo_window);
+        ImGuiStyle& style = ImGui::GetStyle();
+        style.WindowBorderSize = 0.0f;
+        style.WindowPadding = ImVec2(15, 15);
+        style.FrameRounding = 5.f;
 
-        // 2. Show a simple window that we create ourselves. We use a Begin/End pair to create a named window.
-        {
-            static float f = 0.0f;
-            static int counter = 0;
-
-            ImGui::Begin("Hello, world!");                          // Create a window called "Hello, world!" and append into it.
-
-            ImGui::Text("This is some useful text.");               // Display some text (you can use a format strings too)
-            ImGui::Checkbox("Demo Window", &show_demo_window);      // Edit bools storing our window open/close state
-            ImGui::Checkbox("Another Window", &show_another_window);
-
-            ImGui::SliderFloat("float", &f, 0.0f, 1.0f);            // Edit 1 float using a slider from 0.0f to 1.0f
-            ImGui::ColorEdit3("clear color", (float*)&clear_color); // Edit 3 floats representing a color
-
-            if (ImGui::Button("Button"))                            // Buttons return true when clicked (most widgets return true when edited/activated)
-                counter++;
-            ImGui::SameLine();
-            ImGui::Text("counter = %d", counter);
-
-            ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
+        ImGui::SetNextWindowPos(ImVec2(0, 0));
+        ImVec2 windowSize = ImGui::GetIO().DisplaySize;
+        ImGui::SetNextWindowSize(windowSize);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGuiColor(GetRValue(titlebarColor), GetGValue(titlebarColor), GetBValue(titlebarColor)));
+            ImGui::Begin("###NormalWindow", (bool*)true, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDecoration);
+                ImVec4 actionColor = ImGuiColor(240, 150, 40);
+                ImVec4 normalColor = ImGuiColor(220, 110, 25);
+                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, actionColor);
+                ImGui::PushStyleColor(ImGuiCol_Button, normalColor);
+                ImGui::PushStyleColor(ImGuiCol_FrameBg, normalColor);
+                ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, actionColor);
+                ImGui::PushStyleColor(ImGuiCol_FrameBgActive, actionColor);
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, actionColor);
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, actionColor);
+                ImGui::PushStyleColor(ImGuiCol_CheckMark, ImGuiColor(255, 255, 255));
+                    ImGuiMarqueeProgressBar(marqueeFileSearchSpeed, ImVec2(windowSize.x - style.WindowPadding.x * 2, 33));
+                    ImGui::Text("C:/example/path/idk/random.file");
+                    ImGui::Dummy(ImVec2(0, style.WindowPadding.y));
+                    ImGui::ProgressBar(.5f, ImVec2(windowSize.x - style.WindowPadding.x * 3 - 75, 33));
+                    ImGui::SameLine(0, style.WindowPadding.x);
+                    ImGuiPushDisableItem(true);
+                        ImGui::Button("Start", ImVec2(75, 33));
+                    ImGuiPopDisableItem(true);
+                    ImGui::Text("C:/example/path/idk/random.file");
+                    ImGui::Dummy(ImVec2(0, style.WindowPadding.y));
+                    if (ImGui::Button(ImGuiWString(closeBtnText), ImVec2(75, 33)))
+                    {
+                        done = true;
+                    }
+                    ImGuiPushDisableItem(true);
+                    float btnSize = ImGui::GetItemRectSize().y;
+                    ImGui::SameLine(0, windowSize.x - (75 * 3 + style.WindowPadding.x * 5 + (/*Checkbox*/style.FramePadding.y * 2 + style.ItemInnerSpacing.x + ImGui::CalcTextSize("Remember Choice").x + 3)));
+                    float currentPosY = ImGui::GetCursorPosY();
+                    ImGui::SetCursorPosY(currentPosY + btnSize / 2 - ImGui::GetFrameHeight() / 2);
+                    ImGui::Checkbox("Remember Choice", &rememberCheckbox);
+                    ImGui::SetCursorPosY(currentPosY);
+                    ImGui::SameLine(0, style.WindowPadding.x);
+                    ImGui::Button("Skip", ImVec2(75, 33));
+                    ImGui::SameLine(0, style.WindowPadding.x);
+                    ImGui::Button("Kill", ImVec2(75, 33));
+                    ImGuiPopDisableItem(true);
+                ImGui::PopStyleColor(8);
             ImGui::End();
-        }
-
-        // 3. Show another simple window.
-        if (show_another_window)
-        {
-            ImGui::Begin("Another Window", &show_another_window);   // Pass a pointer to our bool variable (the window will have a closing button that will clear the bool when clicked)
-            ImGui::Text("Hello from another window!");
-            if (ImGui::Button("Close Me"))
-                show_another_window = false;
-            ImGui::End();
-        }
+        ImGui::PopStyleColor();
 
         // Rendering
         ImGui::Render();
@@ -221,6 +297,7 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
     WaitForLastSubmittedFrame();
 
     // Cleanup
+    LocalFree(hwnd);
     ImGui_ImplDX12_Shutdown();
     ImGui_ImplWin32_Shutdown();
     ImGui::DestroyContext();
@@ -233,6 +310,73 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
 }
 
 // Helper functions
+
+void ImGuiPushDisableItem(bool toggle)
+{
+    if (toggle)
+    {
+        ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
+    }
+}
+
+void ImGuiPopDisableItem(bool toggle)
+{
+    if (toggle)
+    {
+        ImGui::PopItemFlag();
+        ImGui::PopStyleVar();
+    }
+}
+
+void ImGuiMarqueeProgressBar(float speed, ImVec2 size)
+{
+    ImGuiWindow* window = ImGui::GetCurrentWindow();
+    if (window->SkipItems)
+        return;
+
+    static float progress = 0.0f; // Fortschritt der Animation
+    static bool goingRight = true; // Richtung der Bewegung
+
+    ImGuiContext& g = *GImGui;
+    const ImGuiID id = window->GetID("__marquee__");
+    const ImVec2 pos = window->DC.CursorPos;
+    ImDrawList* draw_list = ImGui::GetWindowDrawList();
+
+    ImVec2 inner_size = size;
+    inner_size.x -= (window->WindowPadding.x * 2);
+
+    const ImRect bb(pos, ImVec2(pos.x + size.x, pos.y + size.y));
+    ImGui::ItemSize(bb, window->WindowPadding.y);
+    if (!ImGui::ItemAdd(bb, id))
+        return;
+
+    // Render the background
+    draw_list->AddRectFilled(bb.Min, bb.Max, ImGui::GetColorU32(ImGuiCol_FrameBg), g.Style.FrameRounding);
+
+    // Update the progress
+    if (goingRight) {
+        progress += ImGui::GetIO().DeltaTime * speed;
+        if (progress >= 1.0f) {
+            progress = 1.0f;
+            goingRight = false;
+        }
+    }
+    else {
+        progress -= ImGui::GetIO().DeltaTime * speed;
+        if (progress <= 0.0f) {
+            progress = 0.0f;
+            goingRight = true;
+        }
+    }
+
+    float bar_start = bb.Min.x + progress * (bb.GetWidth() - inner_size.x / 4);
+    float bar_end = bar_start + inner_size.x / 4; // Die Breite des bewegten Balkens
+
+    // Render the moving bar
+    draw_list->AddRectFilled(ImVec2(bar_start, bb.Min.y), ImVec2(bar_end, bb.Max.y), ImGui::GetColorU32(ImGuiCol_PlotHistogram), g.Style.FrameRounding);
+}
+
 
 bool CreateDeviceD3D(HWND hWnd)
 {
@@ -462,6 +606,10 @@ LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
         if ((wParam & 0xfff0) == SC_KEYMENU) // Disable ALT application menu
             return 0;
         break;
+    case WM_CLOSE:
+        LocalFree(argv);
+        DestroyWindow(hWnd);
+        return 0;
     case WM_DESTROY:
         ::PostQuitMessage(0);
         return 0;
