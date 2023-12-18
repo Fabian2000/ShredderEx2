@@ -16,5 +16,6 @@ public:
 	void Delete(const wstring& path);
 	bool IsFile(const wstring& path);
 	wstring LatestScanFile;
+	wstring LatestDeleteFile;
 };
 

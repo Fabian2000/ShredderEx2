@@ -162,7 +162,7 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
         FileManagement fileManagement;
         vector<vector<wstring>> filesAndFolders;
         int totalCount = 0;
-        std::future<void> findFilesAndFolders = std::async(std::launch::async, [&] {
+        future<void> findFilesAndFolders = async(launch::async, [&] {
             // Get all paths and subpaths
             for (int i = 1; i < argc; i++) {
                 if (fileManagement.IsFile(argv[i])) {
@@ -178,16 +178,33 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
             for (const auto& innerVec : filesAndFolders) {
                 totalCount += innerVec.size();
             }
-            });
+        });
 
         // Main loop
         bool done = false;
         float marqueeFileSearchSpeed = 1.f;
         bool rememberCheckbox = false;
+        bool enableStartBtn = false;
+        bool alreadyEnabledOnes = false;
+        future<void> deleteFilesAndFolders;
         wstring closeBtnText = L"Cancel";
         while (!done) {
-            if (findFilesAndFolders.wait_for(chrono::seconds(0)) == future_status::ready) {
+            if (findFilesAndFolders.wait_for(chrono::seconds(0)) == future_status::ready && !alreadyEnabledOnes) {
                 marqueeFileSearchSpeed = 0.f;
+                enableStartBtn = true;
+                alreadyEnabledOnes = true;
+            }
+
+            bool isFindFilesAndFoldersReady = !findFilesAndFolders.valid() ||
+                (findFilesAndFolders.wait_for(chrono::seconds(0)) == future_status::ready);
+            bool isDeleteFilesAndFoldersReady = !deleteFilesAndFolders.valid() ||
+                (deleteFilesAndFolders.wait_for(chrono::seconds(0)) == future_status::ready);
+
+            if (isFindFilesAndFoldersReady && isDeleteFilesAndFoldersReady) {
+                closeBtnText = L"Close";
+            }
+            else {
+                closeBtnText = L"Cancel";
             }
 
             // Poll and handle messages (inputs, window resize, etc.)
@@ -217,47 +234,53 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
             ImVec2 windowSize = ImGui::GetIO().DisplaySize;
             ImGui::SetNextWindowSize(windowSize);
             ImGui::PushStyleColor(ImGuiCol_WindowBg, ImGuiColor(GetRValue(titlebarColor), GetGValue(titlebarColor), GetBValue(titlebarColor)));
-            ImGui::Begin("###NormalWindow", (bool*)true, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDecoration);
-            ImVec4 actionColor = ImGuiColor(240, 150, 40);
-            ImVec4 normalColor = ImGuiColor(220, 110, 25);
-            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, actionColor);
-            ImGui::PushStyleColor(ImGuiCol_Button, normalColor);
-            ImGui::PushStyleColor(ImGuiCol_FrameBg, normalColor);
-            ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, actionColor);
-            ImGui::PushStyleColor(ImGuiCol_FrameBgActive, actionColor);
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, actionColor);
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, actionColor);
-            ImGui::PushStyleColor(ImGuiCol_CheckMark, ImGuiColor(255, 255, 255));
-            ImGuiMarqueeProgressBar(marqueeFileSearchSpeed, ImVec2(windowSize.x - style.WindowPadding.x * 2, 33));
-            ImGui::SetNextItemWidth(windowSize.x - style.WindowPadding.x * 2);
-            ImGui::Text(ImGuiWString(ImGuiTruncateTextMiddle(fileManagement.LatestScanFile, windowSize.x - style.WindowPadding.x * 2)));
-            ImGui::Dummy(ImVec2(0, style.WindowPadding.y));
-            ImGui::ProgressBar(.5f, ImVec2(windowSize.x - style.WindowPadding.x * 3 - 75, 33));
-            ImGui::SameLine(0, style.WindowPadding.x);
-            ImGuiPushDisableItem(true);
-            ImGui::Button("Start", ImVec2(75, 33));
-            ImGuiPopDisableItem(true);
-            ImGui::Text("C:/example/path/idk/random.file");
-            ImGui::Dummy(ImVec2(0, style.WindowPadding.y));
-            if (ImGui::Button(ImGuiWString(closeBtnText), ImVec2(75, 33)))
-            {
-                done = true;
-                cancelFutureTasks = true;
-            }
-            ImGuiPushDisableItem(true);
-            float btnSize = ImGui::GetItemRectSize().y;
-            ImGui::SameLine(0, windowSize.x - (75 * 3 + style.WindowPadding.x * 5 + (/*Checkbox*/style.FramePadding.y * 2 + style.ItemInnerSpacing.x + ImGui::CalcTextSize("Remember Choice").x + 3)));
-            float currentPosY = ImGui::GetCursorPosY();
-            ImGui::SetCursorPosY(currentPosY + btnSize / 2 - ImGui::GetFrameHeight() / 2);
-            ImGui::Checkbox("Remember Choice", &rememberCheckbox);
-            ImGui::SetCursorPosY(currentPosY);
-            ImGui::SameLine(0, style.WindowPadding.x);
-            ImGui::Button("Skip", ImVec2(75, 33));
-            ImGui::SameLine(0, style.WindowPadding.x);
-            ImGui::Button("Kill", ImVec2(75, 33));
-            ImGuiPopDisableItem(true);
-            ImGui::PopStyleColor(8);
-            ImGui::End();
+                ImGui::Begin("###NormalWindow", (bool*)true, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDecoration);
+                ImVec4 actionColor = ImGuiColor(240, 150, 40);
+                ImVec4 normalColor = ImGuiColor(220, 110, 25);
+                ImGui::PushStyleColor(ImGuiCol_PlotHistogram, actionColor);
+                ImGui::PushStyleColor(ImGuiCol_Button, normalColor);
+                ImGui::PushStyleColor(ImGuiCol_FrameBg, normalColor);
+                ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, actionColor);
+                ImGui::PushStyleColor(ImGuiCol_FrameBgActive, actionColor);
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, actionColor);
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, actionColor);
+                ImGui::PushStyleColor(ImGuiCol_CheckMark, ImGuiColor(255, 255, 255));
+                    ImGuiMarqueeProgressBar(marqueeFileSearchSpeed, ImVec2(windowSize.x - style.WindowPadding.x * 2, 33));
+                    ImGui::SetNextItemWidth(windowSize.x - style.WindowPadding.x * 2);
+                    ImGui::Text(ImGuiWString(ImGuiTruncateTextMiddle(fileManagement.LatestScanFile, windowSize.x - style.WindowPadding.x * 2)));
+                    ImGui::Dummy(ImVec2(0, style.WindowPadding.y));
+                    ImGui::ProgressBar(.5f, ImVec2(windowSize.x - style.WindowPadding.x * 3 - 75, 33));
+                    ImGui::SameLine(0, style.WindowPadding.x);
+                    ImGuiPushDisableItem(!enableStartBtn);
+                        if (ImGui::Button("Start", ImVec2(75, 33))) {
+                            enableStartBtn = false;
+
+                            //deleteFilesAndFolders = std::async(std::launch::async, [&] {
+                                
+                            //});
+                        }
+                    ImGuiPopDisableItem(!enableStartBtn);
+                    ImGui::Text(ImGuiWString(ImGuiTruncateTextMiddle(fileManagement.LatestDeleteFile, windowSize.x - style.WindowPadding.x * 2)));
+                    ImGui::Dummy(ImVec2(0, style.WindowPadding.y));
+                    if (ImGui::Button(ImGuiWString(closeBtnText), ImVec2(75, 33)))
+                    {
+                        done = true;
+                        cancelFutureTasks = true;
+                    }
+                    ImGuiPushDisableItem(true);
+                        float btnSize = ImGui::GetItemRectSize().y;
+                        ImGui::SameLine(0, windowSize.x - (75 * 3 + style.WindowPadding.x * 5 + (/*Checkbox*/style.FramePadding.y * 2 + style.ItemInnerSpacing.x + ImGui::CalcTextSize("Remember Choice").x + 3)));
+                        float currentPosY = ImGui::GetCursorPosY();
+                        ImGui::SetCursorPosY(currentPosY + btnSize / 2 - ImGui::GetFrameHeight() / 2);
+                        ImGui::Checkbox("Remember Choice", &rememberCheckbox);
+                        ImGui::SetCursorPosY(currentPosY);
+                        ImGui::SameLine(0, style.WindowPadding.x);
+                        ImGui::Button("Skip", ImVec2(75, 33));
+                        ImGui::SameLine(0, style.WindowPadding.x);
+                        ImGui::Button("Kill", ImVec2(75, 33));
+                    ImGuiPopDisableItem(true);
+                ImGui::PopStyleColor(8);
+                ImGui::End();
             ImGui::PopStyleColor();
 
             // Rendering
@@ -303,7 +326,7 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
         findFilesAndFolders.get();
 
         // Cleanup
-        LocalFree(hwnd);
+        LocalFree(argv);
         ImGui_ImplDX12_Shutdown();
         ImGui_ImplWin32_Shutdown();
         ImGui::DestroyContext();
@@ -387,8 +410,8 @@ void ImGuiMarqueeProgressBar(float speed, ImVec2 size)
     if (window->SkipItems)
         return;
 
-    static float progress = 0.0f; // Fortschritt der Animation
-    static bool goingRight = true; // Richtung der Bewegung
+    static float progress = 0.0f; // Progress of the animation
+    static bool goingRight = true; // Direction of the movement
 
     ImGuiContext& g = *GImGui;
     const ImGuiID id = window->GetID("__marquee__");
@@ -423,7 +446,7 @@ void ImGuiMarqueeProgressBar(float speed, ImVec2 size)
     }
 
     float bar_start = bb.Min.x + progress * (bb.GetWidth() - inner_size.x / 4);
-    float bar_end = bar_start + inner_size.x / 4; // Die Breite des bewegten Balkens
+    float bar_end = bar_start + inner_size.x / 4; // The width of the animated bar
 
     // Render the moving bar
     draw_list->AddRectFilled(ImVec2(bar_start, bb.Min.y), ImVec2(bar_end, bb.Max.y), ImGui::GetColorU32(ImGuiCol_PlotHistogram), g.Style.FrameRounding);

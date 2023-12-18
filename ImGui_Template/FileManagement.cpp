@@ -27,7 +27,7 @@ vector<wstring> FileManagement::GetAllNeededPaths(const wstring& path, atomic<bo
             else {
                 files.push_back(fullPath);
             }
-        } while (FindNextFile(hFind, &findFileData) != 0 && !cancellation);
+        } while (FindNextFile(hFind, &findFileData) != 0 && !(cancellation && *cancellation));
         FindClose(hFind);
     }
 
