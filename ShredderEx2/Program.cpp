@@ -17,6 +17,12 @@
 #include <dxgi1_4.h>
 #include <tchar.h>
 
+#pragma comment(lib, "ole32.lib")
+#include <shobjidl.h>
+
+#pragma comment(lib, "shlwapi.lib")
+#include <shlwapi.h>
+
 #ifdef _DEBUG
 #define DX12_ENABLE_DEBUG_LAYER
 #endif
@@ -29,9 +35,12 @@
 #include "imgui/imgui_internal.h"
 #include <future>
 #include "FileManagement.h"
+#include "resource.h"
 
-#define ImGuiColor(r, g, b, a)  ImVec4(r / 255.f, g / 255.f, b / 255.f, a / 255.f)
-#define ImGuiColor(r, g, b)  ImVec4(r / 255.f, g / 255.f, b / 255.f, 1.f)
+template<typename T1, typename T2, typename T3, typename T4>
+constexpr auto ImGuiColor(T1 r, T2  g, T3  b, T4  a) { return ImVec4(r / 255.f, g / 255.f, b / 255.f, a / 255.f); }
+template<typename T1, typename T2, typename T3>
+constexpr auto ImGuiColor(T1 r, T2  g, T3  b) { return ImVec4(r / 255.f, g / 255.f, b / 255.f, 1.f); }
 
 #define ImGuiWString(wstr) ([](const std::wstring& _wstr) -> std::string { \
     if (_wstr.empty()) return std::string(); \
@@ -73,6 +82,7 @@ wstring ImGuiTruncateTextMiddle(const std::wstring& text, float maxWidth);
 void ImGuiPushDisableItem(bool toggle);
 void ImGuiPopDisableItem(bool toggle);
 void ImGuiMarqueeProgressBar(float speed, ImVec2 size);
+wstring OpenFileOrFolderDialog(HWND hwnd);
 bool CreateDeviceD3D(HWND hWnd);
 void CleanupDeviceD3D();
 void CreateRenderTarget();
@@ -87,6 +97,17 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
     try {
         int argc;
         argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+
+        wstring selectedPath = L"";
+
+        if (argc <= 1) {
+            selectedPath = OpenFileOrFolderDialog(NULL);
+            if (selectedPath.empty()) {
+                MessageBox(NULL, L"Please specify at least one file or folder.", L"ShredderEx2", MB_OK | MB_ICONERROR);
+                exit(0);
+            }
+		}
+
         // Create application window
         //ImGui_ImplWin32_EnableDpiAwareness();
         WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr };
@@ -101,9 +122,18 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
             return 1;
         }
 
+        HICON hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_ICON1)); // IDI_ICON1 ist die ID des Icons
+        if (hIcon)
+        {
+            SendMessage(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon); // Großes Icon - In Window TItlebar
+            SendMessage(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hIcon); // Kleines Icon - In Window Titlebar
+            SetClassLongPtr(hwnd, GCLP_HICON, NULL);
+        }
+
         // Window size and controls
+        SetWindowLongPtr(hwnd, GWL_STYLE, GetWindowLongPtr(hwnd, GWL_STYLE) & ~WS_SYSMENU);
         ImVec2 windowFullSize = ImVec2(550, 260);
-        SetWindowPos(hwnd, NULL, 200, 200, windowFullSize.x, windowFullSize.y, 0);
+        SetWindowPos(hwnd, NULL, 200, 200, static_cast<int>(windowFullSize.x), static_cast<int>(windowFullSize.y), 0);
         LONG style = GetWindowLong(hwnd, GWL_STYLE);
         style &= ~WS_MAXIMIZEBOX;
         style &= ~WS_THICKFRAME;
@@ -128,6 +158,8 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
         ImGuiIO& io = ImGui::GetIO(); (void)io;
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;     // Enable Keyboard Controls
         io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;      // Enable Gamepad Controls
+        
+        io.IniFilename = NULL;
 
         // Setup Dear ImGui style
         ImGui::StyleColorsDark();
@@ -161,17 +193,30 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
         atomic<bool> cancelFutureTasks(false);
         FileManagement fileManagement;
         vector<vector<wstring>> filesAndFolders;
-        int totalCount = 0;
+        size_t totalCount = 0;
         future<void> findFilesAndFolders = async(launch::async, [&] {
             // Get all paths and subpaths
-            for (int i = 1; i < argc; i++) {
-                if (fileManagement.IsFile(argv[i])) {
-                    vector<wstring> simpleFile = { argv[i] };
-                    filesAndFolders.push_back(simpleFile);
+            if (argc > 1) {
+                for (int i = 1; i < argc; i++) {
+                    if (fileManagement.IsFile(argv[i])) {
+                        vector<wstring> simpleFile = { argv[i] };
+                        filesAndFolders.push_back(simpleFile);
+                    }
+                    else {
+                        filesAndFolders.push_back(fileManagement.GetAllNeededPaths(argv[i], &cancelFutureTasks));
+                        filesAndFolders.push_back({ argv[i] });
+                    }
                 }
+            }
+            else {
+                if (fileManagement.IsFile(selectedPath)) {
+					vector<wstring> simpleFile = { selectedPath };
+					filesAndFolders.push_back(simpleFile);
+				}
                 else {
-                    filesAndFolders.push_back(fileManagement.GetAllNeededPaths(argv[i], &cancelFutureTasks));
-                }
+					filesAndFolders.push_back(fileManagement.GetAllNeededPaths(selectedPath, &cancelFutureTasks));
+                    filesAndFolders.push_back({ selectedPath });
+				}
             }
 
             // Count inner vectors -> Useful for the progressbar -> totalCount = 100 %
@@ -186,21 +231,20 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
         bool rememberCheckbox = false;
         bool enableStartBtn = false;
         bool alreadyEnabledOnes = false;
-        future<void> deleteFilesAndFolders;
+        bool startedDeleting = false;
         wstring closeBtnText = L"Cancel";
         while (!done) {
             if (findFilesAndFolders.wait_for(chrono::seconds(0)) == future_status::ready && !alreadyEnabledOnes) {
                 marqueeFileSearchSpeed = 0.f;
                 enableStartBtn = true;
                 alreadyEnabledOnes = true;
+                fileManagement.SetLatestScanFile(L"");
             }
 
             bool isFindFilesAndFoldersReady = !findFilesAndFolders.valid() ||
                 (findFilesAndFolders.wait_for(chrono::seconds(0)) == future_status::ready);
-            bool isDeleteFilesAndFoldersReady = !deleteFilesAndFolders.valid() ||
-                (deleteFilesAndFolders.wait_for(chrono::seconds(0)) == future_status::ready);
 
-            if (isFindFilesAndFoldersReady && isDeleteFilesAndFoldersReady) {
+            if (fileManagement.GetDone() || isFindFilesAndFoldersReady && !startedDeleting) {
                 closeBtnText = L"Close";
             }
             else {
@@ -247,27 +291,35 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
                 ImGui::PushStyleColor(ImGuiCol_CheckMark, ImGuiColor(255, 255, 255));
                     ImGuiMarqueeProgressBar(marqueeFileSearchSpeed, ImVec2(windowSize.x - style.WindowPadding.x * 2, 33));
                     ImGui::SetNextItemWidth(windowSize.x - style.WindowPadding.x * 2);
-                    ImGui::Text(ImGuiWString(ImGuiTruncateTextMiddle(fileManagement.LatestScanFile, windowSize.x - style.WindowPadding.x * 2)));
+                    ImGui::Text(ImGuiWString(ImGuiTruncateTextMiddle(fileManagement.GetLatestScanFile(), windowSize.x - style.WindowPadding.x * 2)));
                     ImGui::Dummy(ImVec2(0, style.WindowPadding.y));
-                    ImGui::ProgressBar(.5f, ImVec2(windowSize.x - style.WindowPadding.x * 3 - 75, 33));
+
+                    float progressRatio = static_cast<float>(fileManagement.GetProgress()) / static_cast<float>(totalCount);
+                    ImGui::ProgressBar((totalCount > 0) ? fileManagement.GetProgress() <= totalCount ? progressRatio : 100.f : 0.0f, ImVec2(windowSize.x - style.WindowPadding.x * 3 - 75, 33));
                     ImGui::SameLine(0, style.WindowPadding.x);
                     ImGuiPushDisableItem(!enableStartBtn);
                         if (ImGui::Button("Start", ImVec2(75, 33))) {
                             enableStartBtn = false;
+                            startedDeleting = true;
 
-                            //deleteFilesAndFolders = std::async(std::launch::async, [&] {
-                                
-                            //});
+                            vector<wstring> combined;
+
+                            for (const auto& folder : filesAndFolders) {
+                                combined.insert(combined.end(), folder.begin(), folder.end());
+                            }
+
+                            fileManagement.Delete(combined);
                         }
                     ImGuiPopDisableItem(!enableStartBtn);
-                    ImGui::Text(ImGuiWString(ImGuiTruncateTextMiddle(fileManagement.LatestDeleteFile, windowSize.x - style.WindowPadding.x * 2)));
+                    ImGui::Text(ImGuiWString(ImGuiTruncateTextMiddle(fileManagement.GetLatestDeleteFile(), windowSize.x - style.WindowPadding.x * 2)));
                     ImGui::Dummy(ImVec2(0, style.WindowPadding.y));
                     if (ImGui::Button(ImGuiWString(closeBtnText), ImVec2(75, 33)))
                     {
                         done = true;
                         cancelFutureTasks = true;
+                        fileManagement.SetDeleteFutureCancellation(true);
                     }
-                    ImGuiPushDisableItem(true);
+                    ImGuiPushDisableItem(fileManagement.GetDone() || !(fileManagement.GetBreakpoint() && !fileManagement.GetRemember()));
                         float btnSize = ImGui::GetItemRectSize().y;
                         ImGui::SameLine(0, windowSize.x - (75 * 3 + style.WindowPadding.x * 5 + (/*Checkbox*/style.FramePadding.y * 2 + style.ItemInnerSpacing.x + ImGui::CalcTextSize("Remember Choice").x + 3)));
                         float currentPosY = ImGui::GetCursorPosY();
@@ -275,10 +327,16 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, 
                         ImGui::Checkbox("Remember Choice", &rememberCheckbox);
                         ImGui::SetCursorPosY(currentPosY);
                         ImGui::SameLine(0, style.WindowPadding.x);
-                        ImGui::Button("Skip", ImVec2(75, 33));
+                        if (ImGui::Button("Skip", ImVec2(75, 33))) {
+                            fileManagement.SetRemember(rememberCheckbox);
+                            fileManagement.SetAction(FileManagement::FileAction::Skip);
+                        }
                         ImGui::SameLine(0, style.WindowPadding.x);
-                        ImGui::Button("Kill", ImVec2(75, 33));
-                    ImGuiPopDisableItem(true);
+                        if (ImGui::Button("Kill", ImVec2(75, 33))) {
+                            fileManagement.SetRemember(rememberCheckbox);
+							fileManagement.SetAction(FileManagement::FileAction::Kill);
+                        }
+                    ImGuiPopDisableItem(fileManagement.GetDone() || !(fileManagement.GetBreakpoint() && !fileManagement.GetRemember()));
                 ImGui::PopStyleColor(8);
                 ImGui::End();
             ImGui::PopStyleColor();
@@ -388,16 +446,16 @@ wstring ImGuiTruncateTextMiddle(const wstring& text, float maxWidth) {
 
 void ImGuiPushDisableItem(bool toggle)
 {
-    if (toggle)
+    //if (toggle)
     {
-        ImGui::PushItemFlag(ImGuiItemFlags_Disabled, true);
-        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * 0.5f);
+        ImGui::PushItemFlag(ImGuiItemFlags_Disabled, toggle);
+        ImGui::PushStyleVar(ImGuiStyleVar_Alpha, ImGui::GetStyle().Alpha * toggle ? 0.5f : 1.f);
     }
 }
 
 void ImGuiPopDisableItem(bool toggle)
 {
-    if (toggle)
+    //if (toggle)
     {
         ImGui::PopItemFlag();
         ImGui::PopStyleVar();
@@ -427,29 +485,209 @@ void ImGuiMarqueeProgressBar(float speed, ImVec2 size)
         return;
 
     // Render the background
+    ImGuiPushDisableItem(speed <= 0.f);
     draw_list->AddRectFilled(bb.Min, bb.Max, ImGui::GetColorU32(ImGuiCol_FrameBg), g.Style.FrameRounding);
-
-    // Update the progress
-    if (goingRight) {
-        progress += ImGui::GetIO().DeltaTime * speed;
-        if (progress >= 1.0f) {
-            progress = 1.0f;
-            goingRight = false;
+    ImGuiPopDisableItem(speed <= 0.f);
+    
+    if (speed > 0.0f) {
+        // Update the progress
+        if (goingRight) {
+            progress += ImGui::GetIO().DeltaTime * speed;
+            if (progress >= 1.0f) {
+                progress = 1.0f;
+                goingRight = false;
+            }
         }
-    }
-    else {
-        progress -= ImGui::GetIO().DeltaTime * speed;
-        if (progress <= 0.0f) {
-            progress = 0.0f;
-            goingRight = true;
+        else {
+            progress -= ImGui::GetIO().DeltaTime * speed;
+            if (progress <= 0.0f) {
+                progress = 0.0f;
+                goingRight = true;
+            }
         }
+
+        float bar_start = bb.Min.x + progress * (bb.GetWidth() - inner_size.x / 4);
+        float bar_end = bar_start + inner_size.x / 4; // The width of the animated bar
+
+        // Render the moving bar
+
+        draw_list->AddRectFilled(ImVec2(bar_start, bb.Min.y), ImVec2(bar_end, bb.Max.y), ImGui::GetColorU32(ImGuiCol_PlotHistogram), g.Style.FrameRounding);
+    }
+}
+
+INT_PTR CALLBACK StartDialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+    switch (uMsg)
+    {
+    case WM_INITDIALOG:
+    {
+        // Center the dialog on the screen.  ::GetWindowRect returns screen
+        RECT rect;
+        GetWindowRect(hwndDlg, &rect);
+        int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+        int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+        int width = rect.right - rect.left;
+        int height = rect.bottom - rect.top;
+        int x = (screenWidth - width) / 2;
+        int y = (screenHeight - height) / 2;
+        SetWindowPos(hwndDlg, NULL, x, y, 0, 0, SWP_NOZORDER | SWP_NOSIZE);
+        return TRUE;
+    }
+    case WM_COMMAND:
+        switch (LOWORD(wParam))
+        {
+        case IDC_FILE_BUTTON:
+            EndDialog(hwndDlg, IDC_FILE_BUTTON);
+            return TRUE;
+        case IDC_FOLDER_BUTTON:
+            EndDialog(hwndDlg, IDC_FOLDER_BUTTON);
+            return TRUE;
+        case IDC_INSTALL_BUTTON:
+            EndDialog(hwndDlg, IDC_INSTALL_BUTTON);
+            return TRUE;
+        case IDC_UNINSTALL_BUTTON:
+            EndDialog(hwndDlg, IDC_UNINSTALL_BUTTON);
+            return TRUE;
+        case IDCANCEL:
+            EndDialog(hwndDlg, IDCANCEL);
+            return TRUE;
+        }
+        break;
+    }
+    return FALSE;
+}
+
+void DeleteRegistryKeys()
+{
+    HKEY hKey;
+    // Open the Registry-Key for Directories
+    if (RegOpenKeyEx(HKEY_CLASSES_ROOT, TEXT("Directory\\shell\\"), 0, KEY_WRITE, &hKey) == ERROR_SUCCESS)
+    {
+        // Delete subkeys
+        RegDeleteKey(hKey, TEXT("ShredderEx2\\command"));
+        RegDeleteKey(hKey, TEXT("ShredderEx2"));
+        RegCloseKey(hKey);
     }
 
-    float bar_start = bb.Min.x + progress * (bb.GetWidth() - inner_size.x / 4);
-    float bar_end = bar_start + inner_size.x / 4; // The width of the animated bar
+    // Open the Registry-Key for files
+    if (RegOpenKeyEx(HKEY_CLASSES_ROOT, TEXT("*\\shell\\"), 0, KEY_WRITE, &hKey) == ERROR_SUCCESS)
+    {
+        // Delete subkeys
+        RegDeleteKey(hKey, TEXT("ShredderEx2\\command"));
+        RegDeleteKey(hKey, TEXT("ShredderEx2"));
+        RegCloseKey(hKey);
+    }
+}
 
-    // Render the moving bar
-    draw_list->AddRectFilled(ImVec2(bar_start, bb.Min.y), ImVec2(bar_end, bb.Max.y), ImGui::GetColorU32(ImGuiCol_PlotHistogram), g.Style.FrameRounding);
+void CreateRegistryKeys()
+{
+    TCHAR szPath[MAX_PATH];
+    DWORD pathLen = GetModuleFileName(NULL, szPath, MAX_PATH);
+    if (pathLen == 0 || pathLen == MAX_PATH)
+        return; // Error while calling path
+
+    // get path of executable
+    PathQuoteSpaces(szPath);
+    lstrcat(szPath, TEXT(" \"%1\"")); // Appends " %1" to (inclusiv Quotes)
+
+    HKEY hKey;
+    // Create Registry-Key for Directories
+    if (RegOpenKeyEx(HKEY_CLASSES_ROOT, TEXT("Directory\\shell\\"), 0, KEY_WRITE, &hKey) == ERROR_SUCCESS)
+    {
+        HKEY hSubKey;
+        if (RegCreateKeyEx(hKey, TEXT("ShredderEx2\\command"), 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hSubKey, NULL) == ERROR_SUCCESS)
+        {
+            // Create the default value of the subkey
+            RegSetValueEx(hSubKey, NULL, 0, REG_SZ, (const BYTE*)szPath, (lstrlen(szPath) + 1) * sizeof(TCHAR));
+            RegCloseKey(hSubKey);
+        }
+        RegCloseKey(hKey);
+    }
+
+    // Create Registry-Key for files
+    if (RegOpenKeyEx(HKEY_CLASSES_ROOT, TEXT("*\\shell\\"), 0, KEY_WRITE, &hKey) == ERROR_SUCCESS)
+    {
+        HKEY hSubKey;
+        if (RegCreateKeyEx(hKey, TEXT("ShredderEx2\\command"), 0, NULL, REG_OPTION_NON_VOLATILE, KEY_WRITE, NULL, &hSubKey, NULL) == ERROR_SUCCESS)
+        {
+            // Set the default value of the subkey
+            RegSetValueEx(hSubKey, NULL, 0, REG_SZ, (const BYTE*)szPath, (lstrlen(szPath) + 1) * sizeof(TCHAR));
+            RegCloseKey(hSubKey);
+        }
+        RegCloseKey(hKey);
+    }
+}
+
+wstring OpenFileOrFolderDialog(HWND hwnd)
+{
+    wstring selectedPath;
+
+    // Show userdefined dialog (102 -> resource.h -> DialogBox)
+    INT_PTR choice = DialogBox(GetModuleHandle(NULL), MAKEINTRESOURCE(IDD_DIALOG1), hwnd, StartDialogProc);
+
+    if (choice == IDCANCEL)
+    {
+        return L""; // User canceled the action
+    }
+
+    if (choice == IDC_INSTALL_BUTTON)
+    {
+        CreateRegistryKeys();
+        MessageBox(NULL, L"Installed ShredderEx2 successfully.", L"ShredderEx2", MB_OK | MB_ICONINFORMATION);
+        exit(0);
+        return L"";
+    }
+
+    if (choice == IDC_UNINSTALL_BUTTON)
+    {
+        DeleteRegistryKeys();
+        MessageBox(NULL, L"Uninstalled ShredderEx2 successfully.", L"ShredderEx2", MB_OK | MB_ICONINFORMATION);
+        exit(0);
+        return L"";
+    }
+
+    bool pickFolders = (choice == IDC_FOLDER_BUTTON);
+
+    // Initialize COM
+    HRESULT nothing = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+
+    // Create File Dialog
+    IFileDialog* pfd = NULL;
+    HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_ALL, IID_IFileDialog, reinterpret_cast<void**>(&pfd));
+    if (SUCCEEDED(hr))
+    {
+        // Set the options
+        DWORD dwOptions;
+        pfd->GetOptions(&dwOptions);
+        if (pickFolders)
+        {
+            pfd->SetOptions(dwOptions | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+        }
+
+        // Show the Dialog
+        hr = pfd->Show(hwnd);
+        if (SUCCEEDED(hr))
+        {
+            // Call file/folder selection
+            IShellItem* psi;
+            hr = pfd->GetResult(&psi);
+            if (SUCCEEDED(hr))
+            {
+                PWSTR pszFilePath;
+                hr = psi->GetDisplayName(SIGDN_FILESYSPATH, &pszFilePath);
+                if (SUCCEEDED(hr))
+                {
+                    selectedPath = pszFilePath;
+                    CoTaskMemFree(pszFilePath);
+                }
+                psi->Release();
+            }
+        }
+        pfd->Release();
+    }
+
+    CoUninitialize();
+    return selectedPath;
 }
 
 
